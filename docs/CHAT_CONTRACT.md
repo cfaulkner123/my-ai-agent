@@ -311,11 +311,13 @@ Changes require a versioned contract when they:
 - Make the workflow asynchronous.
 - Require browser authentication.
 
-## Contract acceptance tests
+## Contract acceptance criteria
 
-Automated tests cover gateway validation, stable error handling, response
-filtering, static-file safety, text extraction, invalid binary input, workflow
-structure, prompt boundaries, and size limits. The contract suite proves:
+This repository does not ship an automated test suite, so the criteria below are
+verified manually before releasing a change. They cover gateway validation,
+stable error handling, response filtering, static-file safety, text extraction,
+invalid binary input, workflow structure, prompt boundaries, and size limits.
+The contract requires that:
 
 - A valid request is forwarded and returned.
 - Whitespace is trimmed.
@@ -333,7 +335,7 @@ structure, prompt boundaries, and size limits. The contract suite proves:
   source material.
 - The local document reader rejects unsupported, oversized, or malformed input.
 
-The native packaging and agent smoke tests additionally prove:
+The native packaging and agent behaviour must additionally hold:
 
 - Both exported workflows import and publish in the pinned n8n package.
 - n8n, the document reader, and chat all become healthy.
