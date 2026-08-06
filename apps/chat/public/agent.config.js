@@ -7,14 +7,15 @@
  * Keep each example prompt on its own line and leave the commas in place.
  */
 window.AGENT_CONFIG = Object.freeze({
-  name: "Project Manager",
-  subtitle: "Turn meetings, documents, and project ideas into clear next actions.",
+  name: "Practice Manager",
+  subtitle:
+    "Turn client cycles, deadlines, and meetings into a clear plan for running your advice practice.",
   welcomeMessage:
-    "Hello! I’m your Project Manager. Add a meeting transcript or tell me what you’re working on, and I’ll help turn it into decisions, plans, and safe next actions.",
-  primaryColour: "#6D4AFF",
+    "Hi Coby — I'm your Practice Manager. Tell me what's on this week, or drop in meeting notes, and I'll turn it into a clear, prioritised plan. I handle the workflow and deadlines — not client advice.",
+  primaryColour: "#1D4ED8",
   examplePrompts: [
-    "Turn these meeting notes into decisions and action items",
-    "Build a practical project plan from this document",
-    "Show me the highest-priority work in my local project",
+    "Organise this month's client annual reviews into a task plan",
+    "Turn these meeting notes into action items with owners and due dates",
+    "Show me my highest-priority work this week",
   ],
 });
