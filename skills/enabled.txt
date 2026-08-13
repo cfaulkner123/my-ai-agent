@@ -4,3 +4,4 @@ meeting-analysis
 task-capture
 weekly-status
 domain-research
+paid-domain-research

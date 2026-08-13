@@ -36,3 +36,6 @@ coverage/
 
 # Generated release kits contain source archives and checksums
 instructor-pack/
+
+# Local credential map: instance-specific n8n credential IDs, never committed
+n8n/credentials.local.json

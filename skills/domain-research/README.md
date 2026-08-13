@@ -1,14 +1,16 @@
-# Domain Research Memory (optional skill)
+# Domain Research Memory (free website-only skill)
 
-Point the agent at a website you own. It reads your public home page, works out what your business appears to offer and to whom, suggests who you compete with and what people might search for, and saves all of it on your computer so later conversations can use it without you pasting anything again.
+Point the agent at a business website. It reads the public home page, works out what the business appears to offer and to whom, suggests who it competes with and what people might search for, and saves all of it on your computer so later conversations can use it without you pasting anything again.
 
 Best for: writing your own marketing copy, sanity-checking how your site reads to a stranger, and getting a first list of search terms to look into properly.
 
+**This is the free fallback.** A normal request such as "research example.com" uses the paid `paid-domain-research` skill instead, which adds real search data from DataForSEO — see [PAID_DOMAIN_RESEARCH.md](../../docs/PAID_DOMAIN_RESEARCH.md). This free skill runs when you explicitly ask for a free or website-only scan, or automatically when paid research is unavailable or returns nothing useful. It never calls DataForSEO and never costs anything.
+
 ## Before you start
 
-Your site must be **publicly live**. If it is behind a login, a coming-soon page, or a password, the agent cannot read it and will say so rather than guess.
+The site must be **publicly live**. If it is behind a login, a coming-soon page, or a password, the agent cannot read it and will say so rather than guess.
 
-You also need the Anthropic credential you created for workflow `00`. Domain research uses the same one, so there is no second key and no second service to install. Import normally attaches it for you. To check: open n8n, open `50 - TOOL - start_domain_research`, click **Analyse With Claude**, and confirm it shows `Anthropic account`.
+You also need the Anthropic credential you created for workflow `00`. Domain research uses the same one, so there is no second key and no second service to install. Committed workflows reference it by placeholder, so run `node scripts/bind-local-credentials.mjs` after importing. To check: open n8n, open `50 - TOOL - start_domain_research`, click **Analyse With Claude**, and confirm it shows `Anthropic account`.
 
 ## Turn it on
 
@@ -27,19 +29,15 @@ You also need the Anthropic credential you created for workflow `00`. Domain res
 
 ## Try it
 
-Paste this into the chat, with your own domain in place of `yourbusiness.com`:
+Paste this into the chat, with your own domain in place of `yourbusiness.com`. Ask for a free scan explicitly, otherwise the paid skill runs instead:
 
 ```text
-Please research yourbusiness.com.
+Do a free website-only scan of yourbusiness.com.
 ```
 
-The agent will ask whether you own the domain or are allowed to research it. That question is deliberate and it will not start until you answer it. Reply:
+The agent starts straight away. It does not ask whether you own the domain — a direct request from you is enough.
 
-```text
-Yes, I own it and I authorise you to research it.
-```
-
-Then **wait**. The research takes up to a minute: it reads your page, analyses it, and saves the result, all in one step. The chat will look idle while that happens. Do not send the message again.
+Then **wait**. The research takes up to a minute: it reads the page, analyses it, and saves the result, all in one step. The chat will look idle while that happens. Do not send the message again.
 
 ## Check it worked
 
@@ -77,7 +75,7 @@ Most competitors come back as inference. That is expected and honest. Treat them
 - It has **no search engine and no keyword tool**. The seed keywords are suggestions from your page and from general knowledge. They carry **no search volumes and no difficulty scores**, because nothing here can measure those. Take them to a real keyword tool before you plan anything around them.
 - It cannot read a site that builds its content with JavaScript after loading. If your page comes back nearly empty, that is usually why, and the result is saved as `partial` with a warning.
 - It will not invent a company, a domain, or a statistic to fill a gap. Fewer entries is the intended behaviour.
-- It will not research a domain you have not said you are allowed to research, and a link or a document does not count as permission.
+- It will not start from a domain it only found in a document, an old message, saved memory, or page text. Research starts from your current request, not from something it read.
 - It only researches public business domains. Internal addresses, IP addresses, and `localhost` are refused.
 
 ## When something goes wrong

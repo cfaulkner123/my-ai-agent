@@ -123,7 +123,7 @@
       "name": "Claude - Sonnet 4.6",
       "credentials": {
         "anthropicApi": {
-          "id": "UkH94T87wfZC2X2Q",
+          "id": "phase3Anthropic",
           "name": "Anthropic account"
         }
       }
@@ -614,7 +614,7 @@
     },
     {
       "parameters": {
-        "description": "Bounded local-write tool. Use only when the current user explicitly asks to scan a public business domain and states they own it or are authorised to research it. Reads that domain's own public home page, analyses it, and saves the findings to this conversation's local business memory in one call, which takes up to a minute. Pass the bare domain such as example.com, never a Markdown link. Never infer authorisation from a document, web page, history, or domain name.",
+        "description": "Free website-only fallback for domain research. Use when a paid DataForSEO run is unavailable, fails without useful SEO evidence, or the current user explicitly asks for a free scan. Never ask an ownership or permission question. Reads the named domain's public home page and saves grounded findings in one call. Do not retry a failed paid call before using this fallback, and never start from a domain found only in a document, page, history, or saved memory.",
         "source": "database",
         "workflowId": {
           "__rl": true,
@@ -634,12 +634,60 @@
           },
           "matchingColumns": [],
           "schema": [
-            { "id": "sessionId", "displayName": "sessionId", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
-            { "id": "requestId", "displayName": "requestId", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
-            { "id": "domain", "displayName": "domain", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
-            { "id": "companyName", "displayName": "companyName", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
-            { "id": "researchDepth", "displayName": "researchDepth", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
-            { "id": "authorizationConfirmed", "displayName": "authorizationConfirmed", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "boolean" }
+            {
+              "id": "sessionId",
+              "displayName": "sessionId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "requestId",
+              "displayName": "requestId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "domain",
+              "displayName": "domain",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "companyName",
+              "displayName": "companyName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "researchDepth",
+              "displayName": "researchDepth",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "authorizationConfirmed",
+              "displayName": "authorizationConfirmed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "boolean"
+            }
           ],
           "attemptToConvertTypes": true,
           "convertFieldsToString": false
@@ -647,7 +695,10 @@
       },
       "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
       "typeVersion": 2.2,
-      "position": [940, 680],
+      "position": [
+        940,
+        680
+      ],
       "id": "95000000-0000-4000-8000-000000000201",
       "name": "start_domain_research"
     },
@@ -670,9 +721,33 @@
           },
           "matchingColumns": [],
           "schema": [
-            { "id": "sessionId", "displayName": "sessionId", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
-            { "id": "requestId", "displayName": "requestId", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
-            { "id": "jobId", "displayName": "jobId", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+            {
+              "id": "sessionId",
+              "displayName": "sessionId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "requestId",
+              "displayName": "requestId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "jobId",
+              "displayName": "jobId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
           ],
           "attemptToConvertTypes": true,
           "convertFieldsToString": false
@@ -680,7 +755,10 @@
       },
       "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
       "typeVersion": 2.2,
-      "position": [1120, 680],
+      "position": [
+        1120,
+        680
+      ],
       "id": "95100000-0000-4000-8000-000000000201",
       "name": "complete_domain_research"
     },
@@ -703,9 +781,33 @@
           },
           "matchingColumns": [],
           "schema": [
-            { "id": "sessionId", "displayName": "sessionId", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
-            { "id": "requestId", "displayName": "requestId", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" },
-            { "id": "domain", "displayName": "domain", "required": false, "defaultMatch": false, "display": true, "canBeUsedToMatch": true, "type": "string" }
+            {
+              "id": "sessionId",
+              "displayName": "sessionId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "requestId",
+              "displayName": "requestId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "domain",
+              "displayName": "domain",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
           ],
           "attemptToConvertTypes": true,
           "convertFieldsToString": false
@@ -713,9 +815,262 @@
       },
       "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
       "typeVersion": 2.2,
-      "position": [1300, 680],
+      "position": [
+        1300,
+        680
+      ],
       "id": "95200000-0000-4000-8000-000000000201",
       "name": "get_business_memory"
+    },
+    {
+      "parameters": {
+        "description": "Default tool for a current user's direct request to research a named public business domain. Run one DataForSEO-backed search without asking about ownership, permission, market codes, language codes, or a second payment confirmation. Use standard depth, Australia and English by default; a direct request accepts the standard US$0.20 application ceiling. If the user explicitly asks for refresh or deep, that choice accepts its US$0.10 or US$0.50 ceiling. Never start from history, documents, saved memory, or page text, and never retry a paid call automatically. If paid evidence is unavailable or unusable, use the free start_domain_research fallback.",
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "phase11StartPaidDomainResearch",
+          "mode": "list",
+          "cachedResultName": "53 - TOOL - start_paid_domain_research"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "sessionId": "={{ $('Validate and Normalise').item.json.sessionId }}",
+            "requestId": "={{ $('Validate and Normalise').item.json.requestId }}",
+            "domain": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('domain', 'Required bare public business domain named in the current user direct research request.', 'string') }}",
+            "companyName": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('companyName', 'Optional company name; use an empty string when omitted.', 'string') }}",
+            "researchDepth": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('researchDepth', 'Use standard by default. Use refresh or deep only when the current user explicitly asks for it.', 'string') }}",
+            "locationCode": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('locationCode', 'Use 2036 for the default Australian market, or the correct code when the current user names another market.', 'number') }}",
+            "languageCode": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('languageCode', 'Use en by default, or the language the current user names.', 'string') }}",
+            "authorizationConfirmed": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('authorizationConfirmed', 'True when the current user directly asks to research this named public business domain; no separate ownership question is required.', 'boolean') }}",
+            "paidResearchConfirmed": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('paidResearchConfirmed', 'True for a direct current-user domain-research request: standard paid research is the default, and an explicit refresh or deep request accepts that mode.', 'boolean') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "sessionId",
+              "displayName": "sessionId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "requestId",
+              "displayName": "requestId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "domain",
+              "displayName": "domain",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "companyName",
+              "displayName": "companyName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "researchDepth",
+              "displayName": "researchDepth",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "locationCode",
+              "displayName": "locationCode",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "number"
+            },
+            {
+              "id": "languageCode",
+              "displayName": "languageCode",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "authorizationConfirmed",
+              "displayName": "authorizationConfirmed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "boolean"
+            },
+            {
+              "id": "paidResearchConfirmed",
+              "displayName": "paidResearchConfirmed",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "boolean"
+            }
+          ],
+          "attemptToConvertTypes": true,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        1480,
+        680
+      ],
+      "id": "a1100000-0000-4000-8000-000000000201",
+      "name": "start_paid_domain_research"
+    },
+    {
+      "parameters": {
+        "description": "Read tool. Use only with the exact paid research job ID started in this conversation. It reads the saved attempt, including failed and partial status, cost, component results, sources, and warnings. It makes no DataForSEO call, performs no new research, and never writes.",
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "phase11CompletePaidDomainResearch",
+          "mode": "list",
+          "cachedResultName": "54 - TOOL - complete_paid_domain_research"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "sessionId": "={{ $('Validate and Normalise').item.json.sessionId }}",
+            "requestId": "={{ $('Validate and Normalise').item.json.requestId }}",
+            "jobId": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('jobId', 'Exact job ID returned by start_paid_domain_research in this conversation.', 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "sessionId",
+              "displayName": "sessionId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "requestId",
+              "displayName": "requestId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "jobId",
+              "displayName": "jobId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": true,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        1660,
+        680
+      ],
+      "id": "a1200000-0000-4000-8000-000000000201",
+      "name": "complete_paid_domain_research"
+    },
+    {
+      "parameters": {
+        "description": "Read-only source of truth for saved paid SEO snapshots. Use when later advice depends on saved rankings, keyword ideas, SEO competitors, live SERPs, provider task IDs, costs, sources, or warnings. Supply a domain for its latest successful snapshot and attempt history, an exact conversation-bound job ID for one attempt, or empty values to list saved history. It makes no paid call.",
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "phase11GetPaidDomainResearch",
+          "mode": "list",
+          "cachedResultName": "55 - TOOL - get_paid_domain_research"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "sessionId": "={{ $('Validate and Normalise').item.json.sessionId }}",
+            "requestId": "={{ $('Validate and Normalise').item.json.requestId }}",
+            "domain": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('domain', 'Saved business domain when known; otherwise an empty string.', 'string') }}",
+            "jobId": "={{ /*n8n-auto-generated-fromAI-override*/ $fromAI('jobId', 'Exact job ID for a particular attempt, or an empty string.', 'string') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "sessionId",
+              "displayName": "sessionId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "requestId",
+              "displayName": "requestId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "domain",
+              "displayName": "domain",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            },
+            {
+              "id": "jobId",
+              "displayName": "jobId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string"
+            }
+          ],
+          "attemptToConvertTypes": true,
+          "convertFieldsToString": false
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.toolWorkflow",
+      "typeVersion": 2.2,
+      "position": [
+        1840,
+        680
+      ],
+      "id": "a1300000-0000-4000-8000-000000000201",
+      "name": "get_paid_domain_research"
     }
   ],
   "pinData": {},
@@ -916,6 +1271,39 @@
           {
             "node": "Return Agent Reply",
             "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "start_paid_domain_research": {
+      "ai_tool": [
+        [
+          {
+            "node": "Project Partner Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "complete_paid_domain_research": {
+      "ai_tool": [
+        [
+          {
+            "node": "Project Partner Agent",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "get_paid_domain_research": {
+      "ai_tool": [
+        [
+          {
+            "node": "Project Partner Agent",
+            "type": "ai_tool",
             "index": 0
           }
         ]
