@@ -56,6 +56,7 @@ const runtimeRoot = resolve(
 const npmInstallTimeoutMs = 30 * 60 * 1_000;
 const npmCommandTimeoutMs = 10 * 60 * 1_000;
 const n8nCliTimeoutMs = 5 * 60 * 1_000;
+const chatDatabaseSchemaVersion = 5;
 
 const paths = {
   envFile: join(projectRoot, ".env"),
@@ -117,6 +118,9 @@ const workflowIds = {
     "phase11StartPaidDomainResearch",
     "phase11CompletePaidDomainResearch",
     "phase11GetPaidDomainResearch",
+    "phase13StartSeoArticle",
+    "phase13WriteSeoArticle",
+    "phase13GetSeoArticle",
   ],
 };
 
@@ -137,6 +141,9 @@ const exportedWorkflowFiles = [
   ["phase11StartPaidDomainResearch", "53-tool-start-paid-domain-research.json"],
   ["phase11CompletePaidDomainResearch", "54-tool-complete-paid-domain-research.json"],
   ["phase11GetPaidDomainResearch", "55-tool-get-paid-domain-research.json"],
+  ["phase13StartSeoArticle", "56-tool-start-seo-article.json"],
+  ["phase13WriteSeoArticle", "57-internal-write-seo-article.json"],
+  ["phase13GetSeoArticle", "58-tool-get-seo-article.json"],
   ["phase3AgentHealth", "90-debug-agent-health.json"],
 ];
 
@@ -1132,6 +1139,58 @@ async function compileSkillBundle() {
   return JSON.stringify(await compileSkills());
 }
 
+// n8n's Overview page is always a flat list of every workflow, so the skill
+// folders only show up inside the local owner's Personal project. Grouping the
+// workflows is what makes that page worth opening; skillsUrl is how a learner
+// finds it.
+// Returns false when grouping was skipped for a good reason, most often an n8n
+// with no folder licence. Only a real failure throws.
+function applyWorkflowFolders(extraArgs = []) {
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--no-warnings",
+      join(projectRoot, "scripts", "apply-workflow-folders.mjs"),
+      `--database=${join(paths.n8nDataDir, "database.sqlite")}`,
+      ...extraArgs,
+    ],
+    { stdio: "inherit" },
+  );
+  if (result.status === 3) {
+    return false;
+  }
+  if (result.status !== 0) {
+    throw new Error("Grouping the workflows into skill folders failed.");
+  }
+  return true;
+}
+
+function personalProjectId() {
+  const databasePath = join(paths.n8nDataDir, "database.sqlite");
+  if (!existsSync(databasePath)) {
+    return null;
+  }
+  const script = [
+    "const { DatabaseSync } = require('node:sqlite');",
+    "const database = new DatabaseSync(process.argv[1], { readOnly: true });",
+    "const row = database.prepare(\"SELECT id FROM project WHERE type = 'personal' ORDER BY createdAt ASC LIMIT 1\").get();",
+    "database.close();",
+    "if (row) process.stdout.write(row.id);",
+  ].join(" ");
+  const result = spawnSync(process.execPath, ["-e", script, databasePath], {
+    encoding: "utf8",
+    env: process.env,
+  });
+  const id = result.status === 0 ? result.stdout.trim() : "";
+  return /^[A-Za-z0-9_-]+$/.test(id) ? id : null;
+}
+
+function skillsUrl(cfg) {
+  const projectId = personalProjectId();
+  const base = `http://localhost:${cfg.n8nPort}`;
+  return projectId ? `${base}/projects/${projectId}/workflows` : null;
+}
+
 async function importReviewedWorkflows() {
   validateWorkflowFiles();
 
@@ -1149,6 +1208,7 @@ async function importReviewedWorkflows() {
 
   print("\nPreparing local data, enabled skills, and reviewed tool dependencies...");
   const published = [];
+  let groupedIntoFolders = false;
   try {
     for (const id of [workflowIds.taskSetup, workflowIds.skillSync]) {
       n8nCliOrThrow(["publish:workflow", `--id=${id}`], `Publishing ${id}`);
@@ -1174,6 +1234,9 @@ async function importReviewedWorkflows() {
         `Enabled skill sync returned an unexpected response: ${skillResponse.body}`,
       );
     }
+
+    print("\nGrouping the workflows into skill folders...");
+    groupedIntoFolders = applyWorkflowFolders();
   } finally {
     for (const id of published) {
       runN8nCli(["unpublish:workflow", `--id=${id}`], { capture: true });
@@ -1184,8 +1247,14 @@ async function importReviewedWorkflows() {
   print("\nWorkflows imported successfully.");
   print("Local task tables and three sample tasks are ready.");
   print("Enabled Markdown skills are synced into the agent.");
+  if (groupedIntoFolders) {
+    print("The workflows are grouped into four skill folders.");
+  }
   const cfg = config();
-  print(`Open http://localhost:${cfg.n8nPort} and follow docs/N8N_AGENT_SETUP.md.`);
+  const skills = skillsUrl(cfg);
+  print(
+    `Open ${skills ?? `http://localhost:${cfg.n8nPort}`} and follow docs/N8N_AGENT_SETUP.md.`,
+  );
   print(
     "The main agent stays inactive until you select your Anthropic credential and publish it.",
   );
@@ -1478,9 +1547,13 @@ async function commandSetupUnlocked() {
   await waitForService("chat");
 
   const cfg = config();
+  const skills = skillsUrl(cfg);
   print("\nLocal stack is healthy.");
   print(`  Chat app:          http://localhost:${cfg.chatPort}`);
   print(`  n8n editor:        http://localhost:${cfg.n8nPort}`);
+  if (skills) {
+    print(`  Your agent's skills: ${skills}`);
+  }
   print("  Next: create the local n8n owner, then open 01 - START HERE - Learner Checklist.");
   return 0;
 }
@@ -1497,9 +1570,13 @@ async function commandStartUnlocked() {
   await startStack();
 
   const cfg = config();
+  const skills = skillsUrl(cfg);
   print("AI Solopreneur is healthy.");
   print(`  Chat app:          http://localhost:${cfg.chatPort}`);
   print(`  n8n editor:        http://localhost:${cfg.n8nPort}`);
+  if (skills) {
+    print(`  Your agent's skills: ${skills}`);
+  }
   return 0;
 }
 
@@ -1561,6 +1638,22 @@ function commandLogs(target = "n8n", lineCount = "100") {
 async function commandImportWorkflows() {
   requireLocalInstall();
   await importReviewedWorkflows();
+  return 0;
+}
+
+async function commandGroupWorkflows(args = []) {
+  requireLocalInstall();
+  const grouped = applyWorkflowFolders(
+    args.includes("--undo") ? ["--undo"] : [],
+  );
+  const cfg = config();
+  const skills = skillsUrl(cfg);
+  if (grouped && skills) {
+    print(`Open ${skills} to see your agent's skills.`);
+  } else if (skills) {
+    print(`Your workflows are at ${skills}.`);
+  }
+  print("Refresh n8n if it is already open in a browser tab.");
   return 0;
 }
 
@@ -1794,7 +1887,7 @@ async function commandRestore(args) {
       return 1;
     }
     const chatCheck = sqliteQuickCheck(chatBackupDatabase);
-    if (!chatCheck.ok || chatCheck.schemaVersion !== 1) {
+    if (!chatCheck.ok || chatCheck.schemaVersion !== chatDatabaseSchemaVersion) {
       printError("The backed-up chat database failed its integrity or schema check. No local data was changed.");
       return 1;
     }
@@ -1916,7 +2009,7 @@ async function commandDiagnose() {
   };
 
   print("AI Solopreneur diagnostics");
-  print("This check never calls Claude or displays credential values.\n");
+  print("This check never calls Claude or DataForSEO and never displays credential values.\n");
 
   ok(`Node.js ${process.versions.node} is available.`);
 
@@ -1968,8 +2061,13 @@ async function commandDiagnose() {
   }
   if (existsSync(paths.chatDatabase)) {
     const chatDatabaseCheck = sqliteQuickCheck(paths.chatDatabase);
-    if (chatDatabaseCheck.ok && chatDatabaseCheck.schemaVersion === 1) {
-      ok("The local chat database and search index are ready (schema 1).");
+    if (
+      chatDatabaseCheck.ok &&
+      chatDatabaseCheck.schemaVersion === chatDatabaseSchemaVersion
+    ) {
+      ok(
+        `The local chat database and search index are ready (schema ${chatDatabaseSchemaVersion}).`,
+      );
     } else {
       failure(
         "The local chat database failed its integrity or schema check. Create a private backup before troubleshooting it.",
@@ -2016,12 +2114,19 @@ async function commandDiagnose() {
           { capture: true },
         );
         if (result.status === 0) {
-          const reference = mainWorkflow.nodes?.find(
-            (node) => node.name === "Claude - Sonnet 4.6",
-          )?.credentials?.anthropicApi;
+          const articleWorkflow = exportedWorkflow("phase13WriteSeoArticle");
+          const references = [
+            mainWorkflow.nodes?.find((node) => node.name === "Claude - Sonnet 4.6")
+              ?.credentials?.anthropicApi,
+            articleWorkflow?.nodes?.find((node) => node.name === "Draft With Claude")
+              ?.credentials?.anthropicApi,
+            articleWorkflow?.nodes?.find((node) => node.name === "Repair With Claude")
+              ?.credentials?.anthropicApi,
+          ].filter(Boolean);
           const credentials = readExportedRows(credentialExport);
-          credentialSelected = Boolean(
-            reference?.id &&
+          credentialSelected = references.length === 3 && references.every(
+            (reference) =>
+              reference?.id &&
               credentials.some(
                 (credential) =>
                   credential.id === reference.id &&
@@ -2035,9 +2140,42 @@ async function commandDiagnose() {
         rmSync(credentialExport, { force: true });
       }
       if (credentialSelected) {
-        ok("An Anthropic credential exists and is selected by the Claude node.");
+        ok("An Anthropic credential is selected by the agent and article writer.");
       } else {
-        action("Create an Anthropic credential named Anthropic account and select it in Claude - Sonnet 4.6.");
+        action("Create an Anthropic credential named Anthropic account and select it in the agent plus both Claude nodes in workflow 57.");
+      }
+
+      const paidWorkflow = exportedWorkflow("phase11StartPaidDomainResearch");
+      const dataForSeoCredentialExport = tmpPath("diagnostic-dataforseo-credentials.json");
+      let dataForSeoCredentialSelected = false;
+      try {
+        const result = runN8nCli(
+          ["export:credentials", "--all", `--output=${dataForSeoCredentialExport}`],
+          { capture: true },
+        );
+        if (result.status === 0 && paidWorkflow !== null) {
+          const reference = paidWorkflow.nodes?.find(
+            (node) => node.name === "DataForSEO Ranked Keywords",
+          )?.credentials?.httpBasicAuth;
+          const credentials = readExportedRows(dataForSeoCredentialExport);
+          dataForSeoCredentialSelected = Boolean(
+            reference?.id &&
+              credentials.some(
+                (credential) =>
+                  credential.id === reference.id &&
+                  credential.type === "httpBasicAuth",
+              ),
+          );
+        }
+      } catch {
+        dataForSeoCredentialSelected = false;
+      } finally {
+        rmSync(dataForSeoCredentialExport, { force: true });
+      }
+      if (dataForSeoCredentialSelected) {
+        ok("A DataForSEO Basic Auth credential is selected by the paid research workflow.");
+      } else {
+        action("Create an HTTP Basic Auth credential named DataForSEO API with your API login and API password, then select it on every DataForSEO node in workflow 53.");
       }
     }
 
@@ -2094,6 +2232,9 @@ Everyday commands (also available as double-click files in the project folder):
 Maintenance commands:
   import-workflows   Re-import the reviewed workflows, sample data, and skills.
   sync-skills        Validate and load the enabled Markdown skills.
+  group-workflows [--undo]
+                     File the workflows into their skill folders in n8n, or put
+                     them all back at the top level. Needs an n8n folder licence.
   export-workflows   Export normalised workflow copies for Git review.
   backup             Save a private copy of chats, n8n data, and settings.
   restore <folder>   Restore chats and n8n data from a saved backup.
@@ -2132,6 +2273,8 @@ async function main() {
       return commandImportWorkflows();
     case "sync-skills":
       return commandSyncSkills();
+    case "group-workflows":
+      return commandGroupWorkflows(rest);
     case "export-workflows":
       return commandExportWorkflows();
     case "backup":

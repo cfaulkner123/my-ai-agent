@@ -88,6 +88,23 @@
     pastedName: document.querySelector("#pasted-name"),
     pastedText: document.querySelector("#pasted-text"),
     pasteForm: document.querySelector("#paste-form"),
+    profileAgentName: document.querySelector("#profile-agent-name"),
+    profileAvatar: document.querySelector("#profile-avatar"),
+    profileAvatarButton: document.querySelector("#profile-avatar-button"),
+    profileAvatarInitials: document.querySelector("#profile-avatar-initials"),
+    profileBoundaries: document.querySelector("#profile-boundaries"),
+    profileBusinessName: document.querySelector("#profile-business-name"),
+    profileCancel: document.querySelector("#profile-cancel"),
+    profileDialog: document.querySelector("#profile-dialog"),
+    profileForm: document.querySelector("#profile-form"),
+    profileOffer: document.querySelector("#profile-offer"),
+    profilePrice: document.querySelector("#profile-price"),
+    profileSample1: document.querySelector("#profile-sample-1"),
+    profileSample2: document.querySelector("#profile-sample-2"),
+    profileSave: document.querySelector("#profile-save"),
+    profileStatus: document.querySelector("#profile-status"),
+    profileVoice: document.querySelector("#profile-voice"),
+    profileWho: document.querySelector("#profile-who"),
     requestStatus: document.querySelector("#request-status"),
     resetButton: document.querySelector("#reset-button"),
     sendButton: document.querySelector("#send-button"),
@@ -105,12 +122,15 @@
   let activeAgentId = "project-manager";
   let uploadedDocuments = [];
   let sessionDocuments = [];
+  let profile = null;
+  let pendingAvatarDataUrl = "";
   let conversations = [];
   let nextConversationCursor = null;
   let currentMessages = [];
   let nextMessageBefore = null;
   let activeConversationTitle = "New conversation";
   let pendingRefreshTimer = null;
+  let articleRefreshTimer = null;
   const narrowLayout = window.matchMedia("(max-width: 50rem)");
 
   function cleanText(value, fallback, maximumLength) {
@@ -170,6 +190,12 @@
   }
 
   function displayAgentName() {
+    // A name saved through the settings form wins over both the registry and
+    // agent.config.js, so renaming the agent needs no file editing.
+    const saved = profile?.agentName ?? "";
+    if (saved.length > 0) {
+      return saved;
+    }
     return activeAgentId === "project-manager"
       ? config.name
       : activeAgent()?.name ?? config.name;
@@ -232,11 +258,30 @@
     elements.conversationAgentName.textContent = name;
     elements.conversationTitleText.textContent = activeConversationTitle;
     elements.input.setAttribute("aria-label", `Message ${name}`);
-    elements.input.placeholder = `What should the ${name} do?`;
+    // "the Project Manager" reads well; "the Coombe Studio" does not, so drop
+    // the article once the learner has named the agent themselves.
+    elements.input.placeholder =
+      (profile?.agentName ?? "").length > 0
+        ? `What should ${name} do?`
+        : `What should the ${name} do?`;
 
     const initials = getInitials(name);
     elements.agentInitials.textContent = initials;
     elements.mobileAgentInitials.textContent = initials;
+    applySavedAvatar();
+  }
+
+  function applySavedAvatar() {
+    const avatar = profile?.avatarDataUrl ?? "";
+    for (const mark of [elements.agentInitials, elements.mobileAgentInitials]) {
+      if (avatar.length > 0) {
+        mark.style.backgroundImage = `url("${avatar}")`;
+        mark.classList.add("brand__mark--photo");
+      } else {
+        mark.style.removeProperty("background-image");
+        mark.classList.remove("brand__mark--photo");
+      }
+    }
   }
 
   function scrollConversation() {
@@ -321,6 +366,23 @@
     return attachment;
   }
 
+  function appendSafeMessageText(element, text) {
+    const localDownload = /\/api\/seo-article\/download\/[A-Za-z0-9_-]{40,60}\.md/g;
+    let offset = 0;
+    for (const match of text.matchAll(localDownload)) {
+      const index = match.index ?? 0;
+      element.append(document.createTextNode(text.slice(offset, index)));
+      const link = document.createElement("a");
+      link.className = "message__download";
+      link.href = match[0];
+      link.download = "";
+      link.textContent = "Download the article (.md)";
+      element.append(link);
+      offset = index + match[0].length;
+    }
+    element.append(document.createTextNode(text.slice(offset)));
+  }
+
   function addMessage(kind, text, attachments = [], options = {}) {
     const wrapper = document.createElement("article");
     wrapper.className = `message message--${kind}`;
@@ -340,7 +402,7 @@
 
     const copy = document.createElement("p");
     copy.className = "message__copy";
-    copy.textContent = text;
+    appendSafeMessageText(copy, text);
 
     body.append(label);
     if (kind === "user" && attachments.length > 0) {
@@ -370,6 +432,221 @@
       scrollConversation();
     }
     return wrapper;
+  }
+
+  function shortArticleText(value, maximum = 180) {
+    if (typeof value !== "string") return "";
+    const cleaned = value.replace(/\s+/g, " ").trim();
+    return cleaned.length <= maximum
+      ? cleaned
+      : `${cleaned.slice(0, maximum - 1).trimEnd()}…`;
+  }
+
+  function articleStatusText(job) {
+    const stages = {
+      queued: "Your article is waiting to start.",
+      preparing_research: "Checking the research and reliable sources…",
+      drafting: "Writing and checking the draft…",
+      repairing: "Improving the evidence and wording…",
+      ready_for_review: "Your article is ready.",
+    };
+    return stages[job?.stage] ?? "Writing and checking your article…";
+  }
+
+  function appendArticleContext(panel, brief) {
+    const who = shortArticleText(brief?.context?.who?.value);
+    const offer = shortArticleText(brief?.context?.offer?.value);
+    if (!who && !offer) return;
+    const context = document.createElement("div");
+    context.className = "article-panel__context";
+    if (who) {
+      const line = document.createElement("p");
+      line.textContent = `Who you help: ${who}`;
+      context.append(line);
+    }
+    if (offer) {
+      const line = document.createElement("p");
+      line.textContent = `What you sell: ${offer}`;
+      context.append(line);
+    }
+    const edit = document.createElement("button");
+    edit.type = "button";
+    edit.className = "article-panel__text-button";
+    edit.textContent = "Edit My Business";
+    edit.addEventListener("click", () => void openProfileDialog());
+    context.append(edit);
+    panel.append(context);
+  }
+
+  function renderArticlePanel(payload) {
+    const previousPanel = elements.conversation.querySelector(".article-panel");
+    const brief = payload?.brief;
+    if (!brief) {
+      previousPanel?.remove();
+      return;
+    }
+    const shouldReveal =
+      previousPanel?.dataset.briefId !== brief.briefId ||
+      previousPanel?.dataset.status !== brief.status;
+    previousPanel?.remove();
+
+    const panel = document.createElement("section");
+    panel.className = "article-panel";
+    panel.dataset.briefId = brief.briefId;
+    panel.dataset.status = brief.status;
+
+    const eyebrow = document.createElement("p");
+    eyebrow.className = "article-panel__eyebrow";
+    eyebrow.textContent = brief.research?.source === "paid"
+      ? "Article ideas from live search data"
+      : "Article ideas from website research";
+
+    const title = document.createElement("h3");
+    title.className = "article-panel__title";
+
+    if (brief.status === "writing") {
+      title.textContent = "Writing your article";
+      const selected = document.createElement("p");
+      selected.className = "article-panel__selected";
+      selected.textContent = brief.selection?.title ?? "Your selected article";
+      const progress = document.createElement("p");
+      progress.className = "article-panel__progress";
+      progress.textContent = articleStatusText(payload.job);
+      panel.append(eyebrow, title, selected, progress);
+    } else if (brief.status === "complete" && payload.article) {
+      title.textContent = "Your article is ready";
+      const selected = document.createElement("p");
+      selected.className = "article-panel__selected";
+      selected.textContent = brief.selection?.title ?? "SEO article";
+      const download = document.createElement("a");
+      download.className = "article-panel__primary";
+      download.href = payload.article.downloadUrl;
+      download.download = "";
+      download.textContent = "Download article";
+      panel.append(eyebrow, title, selected, download);
+    } else if (brief.status === "failed") {
+      title.textContent = "This draft needs attention";
+      const detail = document.createElement("p");
+      detail.className = "article-panel__progress";
+      detail.textContent = payload.job?.errorMessage ??
+        "The article could not be completed. Ask the agent what is needed next.";
+      panel.append(eyebrow, title, detail);
+    } else if (brief.status === "needs_details") {
+      title.textContent = "One quick detail before I write";
+      const detail = document.createElement("p");
+      detail.className = "article-panel__progress";
+      const labels = {
+        who: "who you help",
+        offer: "what you sell",
+        price: "what the article can say about price",
+        boundaries: "what the article must not promise",
+      };
+      const missing = (brief.missingFields ?? []).map((field) => labels[field] ?? field);
+      detail.textContent = missing.length > 0
+        ? `Tell the agent ${missing.join(" and ")}.`
+        : "Reply to the short question in the chat.";
+      panel.append(eyebrow, title, detail);
+      appendArticleContext(panel, brief);
+    } else {
+      title.textContent = "Choose what to write";
+      const intro = document.createElement("p");
+      intro.className = "article-panel__intro";
+      intro.textContent = "Pick one idea. You can change the details before anything is written.";
+      panel.append(eyebrow, title, intro);
+      appendArticleContext(panel, brief);
+
+      const choices = document.createElement("div");
+      choices.className = "article-panel__choices";
+      for (const opportunity of brief.opportunities ?? []) {
+        const card = document.createElement("article");
+        card.className = "article-choice";
+        const number = document.createElement("span");
+        number.className = "article-choice__number";
+        number.textContent = String(opportunity.number);
+        const content = document.createElement("div");
+        const heading = document.createElement("h4");
+        heading.textContent = opportunity.title;
+        const reason = document.createElement("p");
+        reason.textContent = opportunity.reason;
+        const facts = document.createElement("p");
+        facts.className = "article-choice__facts";
+        const interest = Number.isFinite(opportunity.searchVolume)
+          ? `About ${Number(opportunity.searchVolume).toLocaleString()} searches a month`
+          : "Search interest not measured";
+        facts.textContent = `${interest} · ${opportunity.competition} competition`;
+        const choose = document.createElement("button");
+        choose.type = "button";
+        choose.className = "article-panel__primary";
+        choose.textContent = "Write this article";
+        choose.addEventListener("click", () => {
+          void sendMessage(
+            `Write article option ${opportunity.number} for ${brief.domain}.`,
+            true,
+          );
+        });
+        content.append(heading, reason, facts, choose);
+        card.append(number, content);
+        choices.append(card);
+      }
+      panel.append(choices);
+
+      const actions = document.createElement("div");
+      actions.className = "article-panel__actions";
+      const best = document.createElement("button");
+      best.type = "button";
+      best.className = "article-panel__secondary";
+      best.textContent = "Choose the best one for me";
+      best.addEventListener("click", () => {
+        void sendMessage(`Choose the best article for ${brief.domain} and write it.`, true);
+      });
+      const custom = document.createElement("button");
+      custom.type = "button";
+      custom.className = "article-panel__text-button";
+      custom.textContent = "Use another topic";
+      custom.addEventListener("click", () => {
+        elements.input.value = `Write an article for ${brief.domain} about `;
+        updateCharacterCount();
+        resizeInput();
+        elements.input.focus();
+      });
+      actions.append(best, custom);
+      panel.append(actions);
+    }
+
+    elements.conversation.append(panel);
+    if (shouldReveal) {
+      window.requestAnimationFrame(() => {
+        panel.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
+    if (brief.status === "writing") {
+      articleRefreshTimer = window.setTimeout(() => {
+        void refreshArticlePanel();
+      }, 4_000);
+    }
+  }
+
+  async function refreshArticlePanel() {
+    if (articleRefreshTimer !== null) {
+      window.clearTimeout(articleRefreshTimer);
+      articleRefreshTimer = null;
+    }
+    const expectedSessionId = sessionId;
+    try {
+      const response = await fetch(
+        `/api/seo-article/briefs?sessionId=${encodeURIComponent(expectedSessionId)}`,
+        { headers: { Accept: "application/json" } },
+      );
+      if (response.status === 404) {
+        elements.conversation.querySelector(".article-panel")?.remove();
+        return;
+      }
+      const body = await parseResponse(response, "The article plan could not be loaded.");
+      if (sessionId !== expectedSessionId) return;
+      renderArticlePanel(body);
+    } catch {
+      // The normal chat stays usable when the optional article panel is offline.
+    }
   }
 
   function addLoadingMessage() {
@@ -635,6 +912,10 @@
       window.clearTimeout(pendingRefreshTimer);
       pendingRefreshTimer = null;
     }
+    if (articleRefreshTimer !== null) {
+      window.clearTimeout(articleRefreshTimer);
+      articleRefreshTimer = null;
+    }
     elements.conversation.replaceChildren();
     if (nextMessageBefore) {
       const older = document.createElement("button");
@@ -683,6 +964,9 @@
           void loadConversation(sessionId, undefined, true).catch(() => {});
         }
       }, 1_500);
+    }
+    if (currentMessages.length > 0) {
+      void refreshArticlePanel();
     }
   }
 
@@ -869,7 +1153,36 @@
           void createConversation(agent.id);
         });
       }
-      elements.agentList.append(button);
+
+      // A cog cannot live inside the chip button, so the chip becomes a row
+      // holding the selector button and its own settings control.
+      const row = document.createElement("div");
+      row.className = "agent-row";
+      row.append(button);
+
+      if (agent.status === "active") {
+        const settings = document.createElement("button");
+        settings.className = "agent-settings";
+        settings.type = "button";
+        settings.disabled = requestInProgress || documentRequestInProgress;
+        settings.title = `Edit what ${agent.name} knows about you`;
+        settings.innerHTML =
+          '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+          '<circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="1.7" />' +
+          '<path d="M12 2.6v2.2M12 19.2v2.2M21.4 12h-2.2M4.8 12H2.6m14.7-6.6-1.6 1.6M8.1 15.9l-1.6 1.6m10.8 0-1.6-1.6M8.1 8.1 6.5 6.5" ' +
+          'fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.7" />' +
+          "</svg>";
+        const label = document.createElement("span");
+        label.className = "visually-hidden";
+        label.textContent = `Edit what ${agent.name} knows about you`;
+        settings.append(label);
+        settings.addEventListener("click", () => {
+          void openProfileDialog();
+        });
+        row.append(settings);
+      }
+
+      elements.agentList.append(row);
     }
   }
 
@@ -1277,6 +1590,168 @@
     elements.pasteDialog.close();
   });
 
+  const MAX_AVATAR_CHARACTERS = 256 * 1024;
+
+  async function loadProfile() {
+    try {
+      const response = await fetch("/api/profile", {
+        headers: { Accept: "application/json" },
+      });
+      const body = await parseResponse(
+        response,
+        "Saved agent details could not be loaded.",
+      );
+      profile = body.profile ?? null;
+    } catch {
+      // A missing profile must never stop the chat from loading.
+      profile = null;
+    }
+    applySavedAvatar();
+  }
+
+  function setAvatarPreview(dataUrl) {
+    if (dataUrl.length > 0) {
+      elements.profileAvatarButton.style.backgroundImage = `url("${dataUrl}")`;
+      elements.profileAvatarInitials.textContent = "";
+    } else {
+      elements.profileAvatarButton.style.removeProperty("background-image");
+      elements.profileAvatarInitials.textContent = getInitials(
+        elements.profileAgentName.value || displayAgentName(),
+      );
+    }
+  }
+
+  async function openProfileDialog() {
+    if (profile === null) {
+      await loadProfile();
+    }
+    const saved = profile ?? {};
+    elements.profileAgentName.value = saved.agentName ?? "";
+    elements.profileBusinessName.value = saved.businessName ?? "";
+    elements.profileWho.value = saved.whoYouServe ?? "";
+    elements.profileOffer.value = saved.offer ?? saved.sells ?? "";
+    elements.profilePrice.value = saved.price ?? "";
+    elements.profileBoundaries.value = saved.boundaries ?? "";
+    elements.profileVoice.value = saved.voice ?? saved.tone ?? "";
+    const samples = Array.isArray(saved.voiceSamples) ? saved.voiceSamples : [];
+    elements.profileSample1.value = samples[0] ?? "";
+    elements.profileSample2.value = samples[1] ?? "";
+    pendingAvatarDataUrl = saved.avatarDataUrl ?? "";
+    setAvatarPreview(pendingAvatarDataUrl);
+    elements.profileAvatar.value = "";
+    elements.profileStatus.textContent = "";
+    elements.profileDialog.showModal();
+    elements.profileAgentName.focus();
+  }
+
+  elements.profileAgentName.addEventListener("input", () => {
+    if (pendingAvatarDataUrl.length === 0) {
+      setAvatarPreview("");
+    }
+  });
+
+  elements.profileAvatar.addEventListener("change", () => {
+    const file = elements.profileAvatar.files?.[0];
+    if (!file) {
+      return;
+    }
+    const reader = new FileReader();
+    reader.addEventListener("load", () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      if (result.length > MAX_AVATAR_CHARACTERS) {
+        elements.profileStatus.textContent =
+          "That picture is too large. Choose one under 180 KB.";
+        elements.profileAvatar.value = "";
+        return;
+      }
+      pendingAvatarDataUrl = result;
+      setAvatarPreview(result);
+      elements.profileStatus.textContent = "";
+    });
+    reader.addEventListener("error", () => {
+      elements.profileStatus.textContent = "That picture could not be read.";
+    });
+    reader.readAsDataURL(file);
+  });
+
+  elements.profileAvatarButton.addEventListener("click", () => {
+    elements.profileAvatar.click();
+  });
+
+  elements.profileCancel.addEventListener("click", () => {
+    elements.profileDialog.close();
+  });
+
+  // A <dialog> backdrop is painted by the dialog itself, so a click on it
+  // reports the dialog as the target. Anything inside the card reports that
+  // card instead, which is what separates "outside" from "inside".
+  for (const dialog of [elements.profileDialog, elements.pasteDialog]) {
+    dialog.addEventListener("click", (event) => {
+      if (event.target === dialog) {
+        dialog.close();
+      }
+    });
+  }
+
+  elements.profileForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    void (async () => {
+      elements.profileSave.disabled = true;
+      elements.profileStatus.textContent = "Saving...";
+      try {
+        const response = await fetch("/api/profile", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            profile: {
+              agentName: elements.profileAgentName.value,
+              avatarDataUrl: pendingAvatarDataUrl,
+              businessName: elements.profileBusinessName.value,
+              whoYouServe: elements.profileWho.value,
+              offer: elements.profileOffer.value,
+              price: elements.profilePrice.value,
+              boundaries: elements.profileBoundaries.value,
+              voice: elements.profileVoice.value,
+              voiceSamples: [
+                elements.profileSample1.value,
+                elements.profileSample2.value,
+              ],
+            },
+          }),
+        });
+        const body = await parseResponse(
+          response,
+          "Your agent details could not be saved.",
+        );
+        profile = body.profile ?? null;
+        applySavedAvatar();
+        const articlePanel = elements.conversation.querySelector(".article-panel");
+        if (articlePanel?.dataset.briefId) {
+          const updateResponse = await fetch("/api/seo-article/briefs", {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              sessionId,
+              briefId: articlePanel.dataset.briefId,
+            }),
+          });
+          await parseResponse(updateResponse, "The article choices could not be refreshed.");
+          await refreshArticlePanel();
+          elements.profileStatus.textContent =
+            "Saved. This article now uses your updated details.";
+        } else {
+          elements.profileStatus.textContent =
+            "Saved. Run Sync Skills once before using these details in every chat.";
+        }
+      } catch (error) {
+        elements.profileStatus.textContent =
+          error?.message ?? "Your agent details could not be saved.";
+      } finally {
+        elements.profileSave.disabled = false;
+      }
+    })();
+  });
+
   document.addEventListener("click", (event) => {
     if (
       !elements.attachmentMenu.hidden &&
@@ -1352,6 +1827,7 @@
   async function initialise() {
     syncHistoryPanelAccess();
     await loadAgents();
+    await loadProfile();
     applyAgentIdentity();
     renderAgentList();
     renderSuggestions();

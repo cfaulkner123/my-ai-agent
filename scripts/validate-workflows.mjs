@@ -1,6 +1,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readFolderManifest } from "./apply-workflow-folders.mjs";
 import { compileSkills } from "./compile-skills.mjs";
 
 const projectRoot = fileURLToPath(new URL("..", import.meta.url));
@@ -22,6 +23,9 @@ const expectedFiles = [
   "53-tool-start-paid-domain-research.json",
   "54-tool-complete-paid-domain-research.json",
   "55-tool-get-paid-domain-research.json",
+  "56-tool-start-seo-article.json",
+  "57-internal-write-seo-article.json",
+  "58-tool-get-seo-article.json",
   "90-debug-agent-health.json",
 ];
 const failures = [];
@@ -53,6 +57,45 @@ check(
   JSON.stringify(actualFiles) === JSON.stringify(expectedFiles),
   `Expected only ${expectedFiles.join(", ")} in n8n/workflows`,
 );
+
+// A workflow missing from n8n/folders.manifest.json would still import, but it
+// would land outside every skill folder and be invisible to a learner who only
+// ever opens the Personal project.
+const folderManifest = await readFolderManifest();
+const folderIds = new Set();
+const filedWorkflows = new Map();
+for (const folder of folderManifest.folders) {
+  check(
+    Boolean(folder.id) && !folderIds.has(folder.id),
+    `Folder manifest: "${folder.id}" is missing an id or repeats one`,
+  );
+  folderIds.add(folder.id);
+  check(
+    typeof folder.name === "string" &&
+      folder.name.length > 0 &&
+      folder.name.length <= 128,
+    `Folder manifest: "${folder.id}" needs a name of 1 to 128 characters`,
+  );
+  for (const file of folder.workflows) {
+    check(
+      !filedWorkflows.has(file),
+      `Folder manifest: ${file} appears in both ${filedWorkflows.get(file)} and ${folder.id}`,
+    );
+    filedWorkflows.set(file, folder.id);
+  }
+}
+for (const file of expectedFiles) {
+  check(
+    filedWorkflows.has(file),
+    `Folder manifest: ${file} is not in any skill folder`,
+  );
+}
+for (const file of filedWorkflows.keys()) {
+  check(
+    expectedFiles.includes(file),
+    `Folder manifest: ${file} is filed in a folder but is not a workflow export`,
+  );
+}
 
 const workflows = new Map();
 for (const file of expectedFiles) {
@@ -193,7 +236,9 @@ if (agentWorkflow) {
     "Validation: document count and text-size limits are missing",
   );
   check(
-    /agentId !== 'project-manager'/.test(validationCode),
+    /\[\s*'project-manager',\s*'sales'\s*\]\.includes\(agentId\)/.test(
+      validationCode,
+    ),
     "Validation: active agent allow-list check is missing",
   );
   check(
@@ -315,8 +360,10 @@ if (agentWorkflow) {
         "start_paid_domain_research",
         "complete_paid_domain_research",
         "get_paid_domain_research",
+        "start_seo_article",
+        "get_seo_article",
       ]),
-    "Agent: only the reviewed task and domain-research tools may be connected",
+    "Agent: only the reviewed task, domain-research, and SEO article tools may be connected",
   );
 
   const createTool = nodeByName(agentWorkflow, "create_task");
@@ -343,24 +390,6 @@ if (agentWorkflow) {
       ),
     "Agent: start_domain_research must be the no-ownership free fallback",
   );
-  const startPaidResearchTool = nodeByName(
-    agentWorkflow,
-    "start_paid_domain_research",
-  );
-  check(
-    startPaidResearchTool?.parameters?.workflowId?.value ===
-      "phase11StartPaidDomainResearch" &&
-      /without asking about ownership/i.test(
-        startPaidResearchTool?.parameters?.description ?? "",
-      ) &&
-      /never retry a paid call automatically/i.test(
-        startPaidResearchTool?.parameters?.description ?? "",
-      ) &&
-      /free start_domain_research fallback/i.test(
-        startPaidResearchTool?.parameters?.description ?? "",
-      ),
-    "Agent: start_paid_domain_research must be the default, no-ownership, no-auto-retry paid path with a free fallback",
-  );
   const completeResearchTool = nodeByName(
     agentWorkflow,
     "complete_domain_research",
@@ -384,6 +413,69 @@ if (agentWorkflow) {
         getBusinessMemoryTool?.parameters?.description ?? "",
       ),
     "Agent: get_business_memory must read only the reviewed local memory workflow",
+  );
+  const startPaidResearchTool = nodeByName(
+    agentWorkflow,
+    "start_paid_domain_research",
+  );
+  check(
+    startPaidResearchTool?.parameters?.workflowId?.value ===
+      "phase11StartPaidDomainResearch" &&
+      /default tool/i.test(
+        startPaidResearchTool?.parameters?.description ?? "",
+      ) &&
+      /without asking about ownership/i.test(
+        startPaidResearchTool?.parameters?.description ?? "",
+      ) &&
+      /standard depth, Australia and English by default/i.test(
+        startPaidResearchTool?.parameters?.description ?? "",
+      ) &&
+      /never retry a paid call automatically/i.test(
+        startPaidResearchTool?.parameters?.description ?? "",
+      ) &&
+      /free start_domain_research fallback/i.test(
+        startPaidResearchTool?.parameters?.description ?? "",
+      ),
+    "Agent: start_paid_domain_research must be the default, no-ownership, no-auto-retry paid path with a free fallback",
+  );
+  const completePaidResearchTool = nodeByName(
+    agentWorkflow,
+    "complete_paid_domain_research",
+  );
+  check(
+    completePaidResearchTool?.parameters?.workflowId?.value ===
+      "phase11CompletePaidDomainResearch" &&
+      /exact paid research job ID started in this conversation/i.test(
+        completePaidResearchTool?.parameters?.description ?? "",
+      ),
+    "Agent: complete_paid_domain_research must remain conversation-bound and read-only",
+  );
+  const getPaidResearchTool = nodeByName(
+    agentWorkflow,
+    "get_paid_domain_research",
+  );
+  check(
+    getPaidResearchTool?.parameters?.workflowId?.value ===
+      "phase11GetPaidDomainResearch" &&
+      /Read-only source of truth/i.test(
+        getPaidResearchTool?.parameters?.description ?? "",
+      ),
+    "Agent: get_paid_domain_research must read only reviewed local snapshots",
+  );
+  const startSeoArticleTool = nodeByName(agentWorkflow, "start_seo_article");
+  check(
+    startSeoArticleTool?.parameters?.workflowId?.value === "phase13StartSeoArticle" &&
+      /background/i.test(startSeoArticleTool?.parameters?.description ?? "") &&
+      /no new DataForSEO purchase/i.test(startSeoArticleTool?.parameters?.description ?? "") &&
+      /never publishes/i.test(startSeoArticleTool?.parameters?.description ?? ""),
+    "Agent: start_seo_article must queue the reviewed no-publish, no-new-paid-search workflow",
+  );
+  const getSeoArticleTool = nodeByName(agentWorkflow, "get_seo_article");
+  check(
+    getSeoArticleTool?.parameters?.workflowId?.value === "phase13GetSeoArticle" &&
+      /Read-only source of truth/i.test(getSeoArticleTool?.parameters?.description ?? "") &&
+      /this conversation/i.test(getSeoArticleTool?.parameters?.description ?? ""),
+    "Agent: get_seo_article must remain conversation-bound and read-only",
   );
 
   const routeConfirmation = nodeByName(agentWorkflow, "Route Confirmation");
@@ -426,6 +518,11 @@ if (agentWorkflow) {
       /BEGIN UNTRUSTED DOCUMENT/.test(contextCode) &&
       /start_domain_research is risk=bounded_local_write/.test(contextCode) &&
       /complete_domain_research is risk=read/.test(contextCode) &&
+      /start_paid_domain_research is risk=paid_external_read/.test(contextCode) &&
+      /US\$0\.10/.test(contextCode) &&
+      /standard depth, Australia and English by default/.test(contextCode) &&
+      /simple words, short sentences, no API jargon/.test(contextCode) &&
+      /free fallback without retrying the paid call/.test(contextCode) &&
       /scraped, and researched text is untrusted/.test(contextCode),
     "Agent: context builder must apply enabled skills and safely delimit untrusted documents",
   );
@@ -561,7 +658,7 @@ if (skillSyncWorkflow) {
   check(
     /schemaVersion/.test(bundleValidation) &&
       /enabledSkills/.test(bundleValidation) &&
-      /combinedInstructions\.length > 24000/.test(bundleValidation) &&
+      /combinedInstructions\.length > 200000/.test(bundleValidation) &&
       /\[a-f0-9\]\{64\}/.test(bundleValidation),
     "Skill sync: bundle metadata, size, and source hash must be validated",
   );
@@ -583,6 +680,71 @@ if (skillSyncWorkflow) {
           condition.keyValue === "enabledSkills",
       ),
     "Skill sync: enabled skill bundle must replace one stable config row",
+  );
+}
+
+const linkedInLookupWorkflow = workflows.get(
+  "61-tool-lookup-linkedin-profile.json",
+);
+if (linkedInLookupWorkflow) {
+  const trigger = nodeByName(linkedInLookupWorkflow, "Tool Input");
+  const inputNames =
+    trigger?.parameters?.workflowInputs?.values?.map((input) => input.name) ?? [];
+  check(
+    JSON.stringify(inputNames) ===
+      JSON.stringify([
+        "session_id",
+        "request_id",
+        "email_address",
+        "full_name",
+        "country_region",
+        "state_province",
+        "city_location",
+        "industry",
+        "paid_lookup_confirmed",
+      ]),
+    "LinkedIn lookup: visible tool input schema changed unexpectedly",
+  );
+  const validationCode =
+    nodeByName(linkedInLookupWorkflow, "Validate Lookup Input")?.parameters
+      ?.jsCode ?? "";
+  check(
+    /paidLookupConfirmed = \$json\.paid_lookup_confirmed === true/.test(
+      validationCode,
+    ) &&
+      /PAID_LOOKUP_APPROVAL_REQUIRED/.test(validationCode) &&
+      /maxCredits: 0\.30/.test(validationCode),
+    "LinkedIn lookup: per-search approval and 0.30-credit ceiling are missing",
+  );
+  const provider = nodeByName(
+    linkedInLookupWorkflow,
+    "Search Crustdata People",
+  );
+  check(
+    provider?.parameters?.method === "POST" &&
+      provider?.parameters?.url === "https://api.crustdata.com/person/search" &&
+      provider?.parameters?.genericAuthType === "httpBearerAuth" &&
+      provider?.parameters?.headerParameters?.parameters?.some(
+        (header) =>
+          header.name === "x-api-version" && header.value === "2025-11-01",
+      ),
+    "LinkedIn lookup: Crustdata person search must use pinned Bearer authentication",
+  );
+  const rankingCode =
+    nodeByName(linkedInLookupWorkflow, "Rank Safe Candidates")?.parameters
+      ?.jsCode ?? "";
+  check(
+    /profile_enriched: false/.test(rankingCode) &&
+      /slice\(0, 3\)/.test(rankingCode) &&
+      !/business_emails|personal_emails|phone_numbers|contact\./i.test(
+        rankingCode,
+      ),
+    "LinkedIn lookup: result shaping must remain bounded and contact-data free",
+  );
+  check(
+    linkedInLookupWorkflow.meta?.toolRisk === "paid_external_read" &&
+      linkedInLookupWorkflow.meta?.maximumCreditsPerRun === 0.3,
+    "LinkedIn lookup: paid-read risk metadata or credit ceiling is missing",
   );
 }
 
@@ -880,6 +1042,105 @@ for (const file of researchToolFiles) {
   );
 }
 
+// Signal tools are the only category permitted to reach a third-party API.
+// Research tools stay on reviewed localhost services; this category exists
+// because reading public YouTube comments has no local equivalent. The
+// allowlist below is the whole point: it keeps "what can this tool reach"
+// reviewable in one place rather than spread across node parameters.
+const signalToolFiles = ["60-tool-find-signals.json"];
+const signalToolInputs = {
+  "60-tool-find-signals.json": ["sessionId", "topic", "phrases"],
+};
+const allowedSignalNodeTypes = new Set([
+  "n8n-nodes-base.stickyNote",
+  "n8n-nodes-base.executeWorkflowTrigger",
+  "n8n-nodes-base.code",
+  "n8n-nodes-base.if",
+  "n8n-nodes-base.httpRequest",
+  "n8n-nodes-base.dataTable",
+]);
+const allowedSignalHosts =
+  /^https:\/\/www\.googleapis\.com\/youtube\/v3\/(search|commentThreads)$/;
+
+for (const file of signalToolFiles) {
+  const workflow = workflows.get(file);
+  if (!workflow) {
+    continue;
+  }
+  const inputNames =
+    nodeByName(workflow, "Tool Input")?.parameters?.workflowInputs?.values?.map(
+      (input) => input.name,
+    ) ?? [];
+  check(
+    JSON.stringify(inputNames) === JSON.stringify(signalToolInputs[file]),
+    `${workflow.name}: visible input schema changed unexpectedly`,
+  );
+  check(
+    workflow.meta?.toolRisk === "bounded_local_write",
+    `${workflow.name}: reviewed risk metadata is missing`,
+  );
+  check(
+    workflow.nodes.every((node) => allowedSignalNodeTypes.has(node.type)),
+    `${workflow.name}: contains a node outside the signal-tool allowlist`,
+  );
+  const httpNodes = workflow.nodes.filter(
+    (node) => node.type === "n8n-nodes-base.httpRequest",
+  );
+  check(
+    httpNodes.length > 0 &&
+      httpNodes.every((node) => {
+        const url = String(node.parameters?.url ?? "");
+        return !url.includes("$env") && allowedSignalHosts.test(url);
+      }),
+    `${workflow.name}: HTTP destinations must stay on the reviewed YouTube read endpoints`,
+  );
+  check(
+    httpNodes.every((node) => node.parameters?.method === "GET"),
+    `${workflow.name}: signal tools may only read, never POST`,
+  );
+  check(
+    httpNodes.every(
+      (node) =>
+        node.credentials?.httpQueryAuth?.name === "YouTube API Key" &&
+        Object.keys(node.credentials ?? {}).length === 1,
+    ),
+    `${workflow.name}: YouTube requests must use only the reviewed query credential`,
+  );
+  check(
+    workflow.nodes
+      .filter((node) => node.type === "n8n-nodes-base.dataTable")
+      .every((node) =>
+        ["signals", "tool_audit"].includes(node.parameters?.dataTableId?.value),
+      ),
+    `${workflow.name}: signal tools may write only signals and tool_audit`,
+  );
+  const auditNode = nodeByName(workflow, "Write Tool Audit");
+  check(
+    auditNode?.parameters?.operation === "insert" &&
+      auditNode?.parameters?.dataTableId?.value === "tool_audit",
+    `${workflow.name}: every signal tool run must leave an audit row`,
+  );
+}
+
+const signalSetupWorkflow = workflows.get("12-setup-signal-data.json");
+if (signalSetupWorkflow) {
+  const createNode = nodeByName(signalSetupWorkflow, "Create Signals Table");
+  check(
+    createNode?.parameters?.tableName === "signals" &&
+      createNode?.parameters?.options?.createIfNotExists === true,
+    "Signal setup: must create the signals table idempotently",
+  );
+  const columnNames = (
+    createNode?.parameters?.columns?.column ?? []
+  ).map((column) => column.name);
+  check(
+    columnNames.includes("quote") &&
+      columnNames.includes("permalink") &&
+      columnNames.includes("capturedAt"),
+    "Signal setup: signals schema must keep the quote, permalink and capturedAt columns",
+  );
+}
+
 const startResearchWorkflow = workflows.get(
   "50-tool-start-domain-research.json",
 );
@@ -952,6 +1213,53 @@ for (const freeFile of [
   check(
     !JSON.stringify(freeWorkflow).toLowerCase().includes("dataforseo"),
     `${freeFile}: the free website-only path must never reference DataForSEO`,
+  );
+}
+
+const paidResearchFiles = [
+  "53-tool-start-paid-domain-research.json",
+  "54-tool-complete-paid-domain-research.json",
+  "55-tool-get-paid-domain-research.json",
+];
+const paidResearchInputs = {
+  "53-tool-start-paid-domain-research.json": [
+    "sessionId",
+    "requestId",
+    "domain",
+    "companyName",
+    "researchDepth",
+    "locationCode",
+    "languageCode",
+    "authorizationConfirmed",
+    "paidResearchConfirmed",
+  ],
+  "54-tool-complete-paid-domain-research.json": ["sessionId", "requestId", "jobId"],
+  "55-tool-get-paid-domain-research.json": ["sessionId", "requestId", "domain", "jobId"],
+};
+for (const file of paidResearchFiles) {
+  const workflow = workflows.get(file);
+  if (!workflow) continue;
+  const inputNames =
+    nodeByName(workflow, "Tool Input")?.parameters?.workflowInputs?.values?.map(
+      (input) => input.name,
+    ) ?? [];
+  check(
+    JSON.stringify(inputNames) === JSON.stringify(paidResearchInputs[file]),
+    `${workflow.name}: paid research input schema changed unexpectedly`,
+  );
+  check(
+    workflow.nodes.every((node) => allowedResearchNodeTypes.has(node.type)),
+    `${workflow.name}: contains a node outside the research-tool allowlist`,
+  );
+  const auditNodes = workflow.nodes.filter(
+    (node) => node.type === "n8n-nodes-base.dataTable",
+  );
+  check(
+    auditNodes.length === 1 &&
+      auditNodes[0].name === "Write Tool Audit" &&
+      auditNodes[0].parameters?.operation === "insert" &&
+      auditNodes[0].parameters?.dataTableId?.value === "tool_audit",
+    `${workflow.name}: may write only one tool_audit row`,
   );
 }
 
@@ -1065,6 +1373,96 @@ if (getBusinessMemoryWorkflow) {
       (httpNodes[0].parameters?.method === undefined ||
         httpNodes[0].parameters?.method === "GET"),
     "get_business_memory must make exactly one local GET request",
+  );
+}
+
+const startSeoArticleWorkflow = workflows.get("56-tool-start-seo-article.json");
+if (startSeoArticleWorkflow) {
+  const requests = startSeoArticleWorkflow.nodes.filter(
+    (node) => node.type === "n8n-nodes-base.httpRequest",
+  );
+  const queue = nodeByName(startSeoArticleWorkflow, "Queue Background Writer");
+  check(
+    startSeoArticleWorkflow.id === "phase13StartSeoArticle" &&
+      startSeoArticleWorkflow.meta?.toolRisk === "bounded_local_write" &&
+      startSeoArticleWorkflow.meta?.paidCalls === "none" &&
+      requests.every((node) =>
+        /^=?http:\/\/127\.0\.0\.1:3000\//.test(String(node.parameters?.url ?? "")),
+      ),
+    "start_seo_article must use only reviewed local storage and research reads",
+  );
+  check(
+    queue?.parameters?.workflowId?.value === "phase13WriteSeoArticle" &&
+      queue?.parameters?.options?.waitForSubWorkflow === false &&
+      startSeoArticleWorkflow.settings?.executionTimeout <= 30,
+    "start_seo_article must queue the background writer without waiting",
+  );
+  const registrationBody =
+    nodeByName(startSeoArticleWorkflow, "Register Article Job")?.parameters?.jsonBody ?? "";
+  const registrationCheck =
+    nodeByName(startSeoArticleWorkflow, "Check Job Registration")?.parameters?.jsCode ?? "";
+  check(
+    /selectionNumber/.test(registrationBody) &&
+      /chooseStrongestKeyword/.test(registrationBody) &&
+      /targetAudience/.test(registrationBody) &&
+      /offer/.test(registrationBody) &&
+      /price/.test(registrationBody) &&
+      /boundaries/.test(registrationBody) &&
+      /voice/.test(registrationBody) &&
+      /needs_selection/.test(registrationCheck) &&
+      /needs_details/.test(registrationCheck),
+    "start_seo_article must use the saved brief and ask only for missing essentials",
+  );
+}
+
+const writeSeoArticleWorkflow = workflows.get("57-internal-write-seo-article.json");
+if (writeSeoArticleWorkflow) {
+  const requests = writeSeoArticleWorkflow.nodes.filter(
+    (node) => node.type === "n8n-nodes-base.httpRequest",
+  );
+  const destinations = requests.map((node) => String(node.parameters?.url ?? ""));
+  check(
+    writeSeoArticleWorkflow.id === "phase13WriteSeoArticle" &&
+      writeSeoArticleWorkflow.meta?.modelCallable === false &&
+      writeSeoArticleWorkflow.meta?.paidCalls === "none" &&
+      writeSeoArticleWorkflow.settings?.executionTimeout === 1800 &&
+      destinations.every(
+        (url) =>
+          /^=?http:\/\/127\.0\.0\.1:3000\//.test(url) ||
+          url === "https://api.anthropic.com/v1/messages",
+      ),
+    "write_seo_article must remain an internal bounded compiler with reviewed destinations",
+  );
+  check(
+    destinations.filter((url) => url === "https://api.anthropic.com/v1/messages").length === 2 &&
+      /pages\.length<4/.test(
+        nodeByName(writeSeoArticleWorkflow, "Prepare Grounded Draft")?.parameters?.jsCode ?? "",
+      ) &&
+      /UNTRUSTED DATA/.test(
+        nodeByName(writeSeoArticleWorkflow, "Prepare Grounded Draft")?.parameters?.jsCode ?? "",
+      ) &&
+      /unsupported/.test(
+        nodeByName(writeSeoArticleWorkflow, "Inspect Repaired Draft")?.parameters?.jsCode ?? "",
+      ),
+    "write_seo_article must require four sources, resist prompt injection, and allow one repair only",
+  );
+}
+
+const getSeoArticleWorkflow = workflows.get("58-tool-get-seo-article.json");
+if (getSeoArticleWorkflow) {
+  const requests = getSeoArticleWorkflow.nodes.filter(
+    (node) => node.type === "n8n-nodes-base.httpRequest",
+  );
+  check(
+    getSeoArticleWorkflow.id === "phase13GetSeoArticle" &&
+      getSeoArticleWorkflow.meta?.toolRisk === "read" &&
+      getSeoArticleWorkflow.meta?.paidCalls === "none" &&
+      requests.length === 1 &&
+      /127\.0\.0\.1:3000\/api\/seo-article\/jobs/.test(
+        String(requests[0]?.parameters?.url ?? ""),
+      ) &&
+      Object.keys(requests[0]?.credentials ?? {}).length === 0,
+    "get_seo_article must remain one conversation-bound local read",
   );
 }
 
@@ -1269,6 +1667,9 @@ const REVIEWED_SKILL_IDS = [
   "meeting-analysis",
   "task-capture",
   "weekly-status",
+  "domain-research",
+  "paid-domain-research",
+  "seo-article-writer",
 ];
 // Skills that ship switched off. A learner may enable any of them, so the
 // check below guarantees the reviewed set is still present and that nothing
@@ -1296,7 +1697,7 @@ check(
   "Enabled skill list must contain only reviewed or shipped optional skills",
 );
 check(
-  skillBundle.combinedInstructions.length <= 24_000 &&
+  skillBundle.combinedInstructions.length <= 200_000 &&
     /^[a-f0-9]{64}$/.test(skillBundle.sourceHash),
   "Compiled skill bundle must remain bounded and content-addressed",
 );
@@ -1328,8 +1729,15 @@ check(
         ],
         ["complete_paid_domain_research", "read", "explicit_request_required"],
         ["get_paid_domain_research", "read", "automatic"],
+        ["start_seo_article", "bounded_local_write", "explicit_request_required"],
+        [
+          "write_seo_article",
+          "bounded_external_read_and_local_write",
+          "internal_background_only",
+        ],
+        ["get_seo_article", "read", "automatic"],
       ]),
-  "Tool policy must classify the reviewed task and domain-research tools",
+  "Tool policy must classify the reviewed task, research, and article tools",
 );
 check(
   toolPolicy.tools
