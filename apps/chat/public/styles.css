@@ -106,6 +106,18 @@ textarea:focus-visible,
   display: none;
 }
 
+/*
+ * Keep the sidebar sections at their natural height so a short viewport makes
+ * the panel scroll (it already has overflow-y: auto) instead of flexbox
+ * compressing them — which previously let the chat history overlap the
+ * privacy note.
+ */
+.agent-panel > div,
+.agent-selector,
+.history-panel {
+  flex-shrink: 0;
+}
+
 .brand {
   display: flex;
   align-items: center;
