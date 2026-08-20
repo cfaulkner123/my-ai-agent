@@ -26,30 +26,46 @@
     {
       id: "sales",
       name: "Sales",
-      description: "Sales research, preparation, and follow-up workflows.",
-      status: "coming-soon",
-      examplePrompts: [],
+      description: "Researches prospects, drafts replies, and turns calls into proposals.",
+      status: "active",
+      examplePrompts: [
+        "Draft a reply to this enquiry that just came in",
+        "Turn these call notes into a recap and a proposal",
+        "Write a cold email to this person",
+      ],
     },
     {
       id: "marketing",
       name: "Marketing",
-      description: "Campaign planning, content, and marketing operations.",
-      status: "coming-soon",
-      examplePrompts: [],
+      description: "Plans campaigns and creates grounded content from supplied or researched evidence.",
+      status: "active",
+      examplePrompts: [
+        "Turn these customer notes into three grounded content themes",
+        "Build a practical campaign plan from this brief",
+        "Review this draft and identify unsupported claims",
+      ],
     },
     {
       id: "investment",
       name: "Investment",
-      description: "Investment research, analysis, and decision preparation.",
-      status: "coming-soon",
-      examplePrompts: [],
+      description: "Reviews grants, funding evidence, and business updates without making financial decisions.",
+      status: "active",
+      examplePrompts: [
+        "Compare these two funding opportunities from the supplied documents",
+        "Turn this grant brief into eligibility questions and deadlines",
+        "Draft a factual investor update from these notes",
+      ],
     },
     {
       id: "bookkeeping",
       name: "Bookkeeping",
-      description: "Bookkeeping preparation, review, and reconciliation support.",
-      status: "coming-soon",
-      examplePrompts: [],
+      description: "Prepares coding-review suggestions and questions for the user to complete in their accounting system.",
+      status: "active",
+      examplePrompts: [
+        "Review these transactions and suggest coding categories with confidence",
+        "List the questions I should take to my bookkeeper from this statement",
+        "Summarise the unpaid invoices in this document",
+      ],
     },
   ];
   const STORAGE_KEY = "ai-solopreneur-chat-session";
@@ -269,6 +285,9 @@
     elements.agentInitials.textContent = initials;
     elements.mobileAgentInitials.textContent = initials;
     applySavedAvatar();
+    // Every path that changes the active agent comes through here, so this is
+    // the one place the funding progress poll starts and stops.
+    syncScanProgress();
   }
 
   function applySavedAvatar() {
@@ -1405,19 +1424,22 @@
     }
   }
 
+  // Returns whether the turn landed. Callers that a person drives ignore it;
+  // the automatic funding read-out uses it to tell a delivered result from a
+  // send that never arrived.
   async function sendMessage(
     rawMessage,
     showUserMessage,
     retryDocuments,
   ) {
     if (requestInProgress || documentRequestInProgress) {
-      return;
+      return false;
     }
 
     const message = rawMessage.trim();
     if (!message) {
       elements.input.focus();
-      return;
+      return false;
     }
 
     const requestDocuments = Array.isArray(retryDocuments)
@@ -1439,6 +1461,7 @@
     resizeInput();
     setBusy(true);
     loadingMessage = addLoadingMessage();
+    let delivered = false;
     const requestId = createSessionId();
 
     try {
@@ -1473,6 +1496,11 @@
       loadingMessage.remove();
       loadingMessage = null;
       addMessage("agent", responseBody.reply.trim());
+      // The reply is on screen and stored: the turn has landed. Everything
+      // below is a cosmetic refresh of the history panel, and letting its
+      // failure count as a failed send made the funding read-out arrive
+      // twice — once for real, once because the first was scored a miss.
+      delivered = true;
       await loadConversationList();
       await loadConversation(sessionId, undefined, true);
     } catch (error) {
@@ -1493,8 +1521,281 @@
     } finally {
       setBusy(false);
       elements.input.focus();
+      // "Go and search" starts a scan mid-conversation; check straight away
+      // rather than making the new bar wait for the next scheduled poll.
+      if (activeAgentId === FUNDING_AGENT_ID) {
+        void refreshScanProgress();
+      }
+    }
+    return delivered;
+  }
+
+  // ---- Funding search progress ------------------------------------------
+  // A funding search runs server-side for the best part of an hour, and a
+  // chat transcript cannot show that anything is happening. While the
+  // Investment agent is open, the page polls a small endpoint that reads the
+  // search's own progress notes, and draws them as a card at the foot of the
+  // conversation — in the transcript, under the agent's reply, where the
+  // person is already looking.
+  const FUNDING_AGENT_ID = "investment";
+  const SCAN_POLL_MS = 12_000;
+  // What the page asks the agent once a search lands. It goes through the
+  // agent rather than being rendered here, because the whole point is results
+  // in its own words rather than a wall of stored report text.
+  //
+  // Kept to something a person would plausibly type: the turn is stored like
+  // any other and comes back on every reload, so a long machine-worded
+  // instruction would sit in the transcript for ever looking like the owner
+  // wrote it. How to say it belongs in the skill, not in a string here.
+  const SCAN_RESULT_PROMPT = "What did the funding search find?";
+  // A scheduled search runs at 11am with nobody watching, so waiting for a tab
+  // that saw it running meant the owner still had to ask. Delivery is now
+  // decided by what this browser has already read out, kept where it survives
+  // a reload, rather than by what one page happened to witness.
+  const DELIVERED_KEY = "funding-scan-delivered";
+  // Old enough and it is not news any more: the owner has moved on, and an
+  // unprompted read-out of yesterday's search is noise. They can still ask.
+  const DELIVER_WITHIN_MS = 12 * 60 * 60 * 1000;
+  let scanPollTimer = null;
+  let scanWasRunning = false;
+  let scanDoneUntil = 0;
+  let deliveringScan = false;
+  // A floor under the whole mechanism. Marking the search as read handles the
+  // ordinary case, but it only works while finishedAt holds still; anything
+  // that made it move would turn every poll into a fresh search and the
+  // conversation into fifty read-outs. One a minute, whatever else is wrong.
+  let lastDeliveredAt = 0;
+  let scanCard = null;
+
+  function alreadyDelivered(finishedAt) {
+    try {
+      return window.localStorage.getItem(DELIVERED_KEY) === finishedAt;
+    } catch {
+      return false;
     }
   }
+
+  function markDelivered(finishedAt) {
+    try {
+      window.localStorage.setItem(DELIVERED_KEY, finishedAt);
+    } catch {
+      // A browser refusing storage gets one read-out per page load rather
+      // than none, which is the better way round to fail.
+    }
+  }
+
+  function worthDelivering(scan) {
+    const finishedAt = String(scan.finishedAt ?? "");
+    if (scan.interrupted === true || finishedAt === "") {
+      return false;
+    }
+    const finished = Date.parse(finishedAt);
+    if (Number.isNaN(finished) || Date.now() - finished > DELIVER_WITHIN_MS) {
+      return false;
+    }
+    return !alreadyDelivered(finishedAt);
+  }
+
+  function scanProgressCard() {
+    if (scanCard) {
+      return scanCard;
+    }
+    const card = document.createElement("div");
+    card.className = "scan-progress";
+    card.id = "scan-progress";
+    card.setAttribute("role", "status");
+    card.setAttribute("aria-live", "polite");
+    card.hidden = true;
+
+    const spinner = document.createElement("div");
+    spinner.className = "scan-progress__spinner";
+    spinner.setAttribute("aria-hidden", "true");
+
+    const body = document.createElement("div");
+    body.className = "scan-progress__body";
+    const note = document.createElement("p");
+    note.className = "scan-progress__note";
+    const track = document.createElement("div");
+    track.className = "scan-progress__track";
+    track.setAttribute("aria-hidden", "true");
+    const fill = document.createElement("div");
+    fill.className = "scan-progress__fill";
+    track.append(fill);
+    body.append(note, track);
+
+    const meta = document.createElement("p");
+    meta.className = "scan-progress__meta";
+
+    card.append(spinner, body, meta);
+    scanCard = { card, note, fill, meta };
+    return scanCard;
+  }
+
+  // Every path that draws the transcript replaces its children, so the card
+  // re-attaches itself rather than assuming it survived.
+  function attachScanCard(card) {
+    if (card.parentElement !== elements.conversation) {
+      elements.conversation.append(card);
+      return;
+    }
+    if (elements.conversation.lastElementChild !== card) {
+      elements.conversation.append(card);
+    }
+  }
+
+  function hideScanCard() {
+    if (scanCard) {
+      scanCard.card.hidden = true;
+      scanCard.card.remove();
+    }
+  }
+
+  function renderScanProgress(scan) {
+    if (!scan || scan.available === false) {
+      hideScanCard();
+      return;
+    }
+    const { card, note, fill, meta } = scanProgressCard();
+
+    if (scan.running === true) {
+      const wasHidden = card.hidden;
+      scanWasRunning = true;
+      card.classList.remove("scan-progress--done");
+      const total = Number(scan.of) || 0;
+      const step = Number(scan.step) || 0;
+      // Step 0 is "reading the profile", so the bar shows a sliver rather
+      // than nothing: a search that just started should look started.
+      const percent =
+        total > 0
+          ? Math.max(4, Math.min(100, Math.round((step / total) * 100)))
+          : 4;
+      fill.style.width = `${percent}%`;
+      note.textContent = String(scan.note ?? "Searching…");
+      const started = Number(scan.startedMinutesAgo);
+      const quiet = Number(scan.updatedMinutesAgo);
+      let text = Number.isFinite(started) ? `Started ${started} min ago` : "";
+      // A beat can hold one long API call, so a few quiet minutes are
+      // normal; past that the card says when it last heard anything, so a
+      // stall is visible instead of the bar just sitting still.
+      if (Number.isFinite(quiet) && quiet >= 3) {
+        text += ` · last update ${quiet} min ago`;
+      }
+      meta.textContent = text;
+      card.hidden = false;
+      attachScanCard(card);
+      if (wasHidden) {
+        scrollConversation();
+      }
+      return;
+    }
+
+    // Not running. Any finished search this browser has not read out yet gets
+    // read out now — whether this page watched it run, or it was started by a
+    // schedule hours ago and the owner has only just opened the chat.
+    if (scanWasRunning) {
+      scanWasRunning = false;
+      scanDoneUntil = Date.now() + 90_000;
+    }
+    if (worthDelivering(scan)) {
+      scanDoneUntil = Date.now() + 90_000;
+      void deliverScanResults(String(scan.finishedAt));
+    }
+    if (Date.now() >= scanDoneUntil) {
+      hideScanCard();
+      return;
+    }
+    card.classList.add("scan-progress--done");
+    const found = Number(scan.newCount) || 0;
+    note.textContent =
+      scan.interrupted === true
+        ? "The search stopped without finishing. Ask me to search again."
+        : found > 0
+          ? `Search finished — ${found} new ${found === 1 ? "program" : "programs"} found.`
+          : "Search finished.";
+    meta.textContent = "";
+    card.hidden = false;
+    attachScanCard(card);
+  }
+
+  // Sending re-polls when it finishes, and an unmarked search would deliver
+  // again on that poll, and again on the poll after that one — fifty read-outs
+  // in four seconds, each one triggering the next. So the search is marked
+  // before anything is sent, never unmarked, and only one send is ever in the
+  // air at a time.
+  async function deliverScanResults(finishedAt) {
+    if (deliveringScan || requestInProgress || documentRequestInProgress) {
+      // Left unmarked on purpose: a person mid-sentence is not interrupted,
+      // and the next poll picks it up twelve seconds later.
+      return;
+    }
+    if (Date.now() - lastDeliveredAt < 60_000) {
+      return;
+    }
+    deliveringScan = true;
+    lastDeliveredAt = Date.now();
+    try {
+      // Marked before sending, because sending re-polls and an unmarked
+      // search would deliver again on that poll and every one after it.
+      markDelivered(finishedAt);
+      // Shown, not hidden: the server stores it either way, so hiding it now
+      // only means it appears out of nowhere on the next reload.
+      const sent = await sendMessage(SCAN_RESULT_PROMPT, true);
+      if (!sent) {
+        // A send that never arrived would otherwise lose the results in
+        // silence. Unmark it and let the next poll try; the minute floor
+        // above is what keeps that from becoming a storm.
+        markDelivered("");
+      }
+    } finally {
+      deliveringScan = false;
+    }
+  }
+
+  async function refreshScanProgress() {
+    // No visibility guard: the browser already throttles background-tab
+    // timers, the poll is a couple of hundred bytes, and a guard here is one
+    // more way for the bar to sit stale when the user comes back.
+    if (activeAgentId !== FUNDING_AGENT_ID) {
+      return;
+    }
+    try {
+      const response = await fetch("/api/funding-progress", {
+        headers: { Accept: "application/json" },
+      });
+      if (!response.ok) {
+        hideScanCard();
+        return;
+      }
+      renderScanProgress(await response.json());
+    } catch {
+      hideScanCard();
+    }
+  }
+
+  function syncScanProgress() {
+    if (activeAgentId === FUNDING_AGENT_ID) {
+      if (scanPollTimer === null) {
+        scanPollTimer = window.setInterval(() => {
+          void refreshScanProgress();
+        }, SCAN_POLL_MS);
+      }
+      void refreshScanProgress();
+      return;
+    }
+    if (scanPollTimer !== null) {
+      window.clearInterval(scanPollTimer);
+      scanPollTimer = null;
+    }
+    scanWasRunning = false;
+    scanDoneUntil = 0;
+    hideScanCard();
+  }
+
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      void refreshScanProgress();
+    }
+  });
 
   function updateCharacterCount() {
     const length = elements.input.value.length;

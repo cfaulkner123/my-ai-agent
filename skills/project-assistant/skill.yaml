@@ -1,4 +1,5 @@
 id: project-assistant
-name: Advisory Practice Operations
-version: 2.0.0
-description: Run the internal project, deadline, and client-cycle side of a financial advice practice. Factual and process-only, never client advice.
+agent: project-manager
+name: Project Assistant
+version: 1.0.0
+description: Turn uncertain project conversations into practical outcomes and next steps.

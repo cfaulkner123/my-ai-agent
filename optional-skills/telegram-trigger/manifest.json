@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "id": "telegram-trigger",
+  "agent": "marketing",
+  "name": "Telegram Trigger",
+  "requires": [],
+  "agentTools": [],
+  "policyEntries": [],
+  "policyRules": [],
+  "unavailableCapabilities": [],
+  "folders": [
+    {
+      "id": "skill-triggers",
+      "name": "5. Ways your agent gets started",
+      "description": "Entry points that let something outside your computer start your agent: a Telegram message today, an inbox or a schedule later.",
+      "workflows": [
+        "70-trigger-telegram-message.json"
+      ]
+    }
+  ]
+}

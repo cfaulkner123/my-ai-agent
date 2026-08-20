@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { lookup } from "node:dns";
 import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import {
@@ -9,15 +8,19 @@ import {
   type Server,
   type ServerResponse,
 } from "node:http";
-import { request as httpsRequest } from "node:https";
-import { isIP, type LookupFunction } from "node:net";
 import { basename, extname, resolve, sep } from "node:path";
 import Busboy from "busboy";
+import type { AccessGate } from "./access.js";
 import {
   DEFAULT_AGENTS,
   publicAgentDefinitions,
   type AgentDefinition,
 } from "./agents.js";
+import {
+  AgentSettingsStore,
+  AgentSettingsValidationError,
+} from "./agent-settings.js";
+import { buildAgentCardDefinitions } from "./skills.js";
 import {
   DocumentStore,
   DocumentStoreError,
@@ -57,12 +60,7 @@ const MAX_MESSAGE_LENGTH = 8_000;
 // A saved picture is base64 inside the JSON body, so this endpoint alone needs
 // more room than the 64 KB used by every other request.
 const MAX_PROFILE_REQUEST_BYTES = 512 * 1_024;
-// A saved research record carries a company profile, competitor lists, and
-// keywords in one JSON body, so this endpoint needs more room than the 64 KB
-// used by every other request.
 const MAX_BUSINESS_MEMORY_REQUEST_BYTES = 256 * 1_024;
-// A paid snapshot carries ranked keywords, candidates, competitors and captured
-// search results, so it is the largest body the gateway accepts.
 const MAX_PAID_RESEARCH_REQUEST_BYTES = 1_024 * 1_024;
 const MAX_SEO_ARTICLE_REQUEST_BYTES = 1_024 * 1_024;
 const MAX_REQUEST_BYTES = 65_536;
@@ -153,6 +151,15 @@ export interface ChatGatewayOptions {
   documentStore?: DocumentStore;
   chatStore?: ChatStore;
   profileStore?: ProfileStore;
+  agentSettingsStore?: AgentSettingsStore;
+  skillsDirectory?: string;
+  profileDirectory?: string;
+  /**
+   * Guards every route except /health. Omitted on a learner's own computer,
+   * where the gateway is only reachable from that computer; required before
+   * the gateway is given a public address.
+   */
+  accessGate?: AccessGate | undefined;
 }
 
 class PublicError extends Error {
@@ -512,8 +519,6 @@ function validateSeoSnapshot(body: unknown): SeoSnapshotInput {
     throw new PublicError(400, "INVALID_REQUEST", "The paid research has an invalid component status.");
   }
   const researchDepth = candidate.researchDepth as SeoSnapshotInput["researchDepth"];
-  // The reviewed spending ceiling for each depth, enforced server-side so a
-  // workflow edit alone cannot raise it.
   const maximumCost = { refresh: 0.1, standard: 0.2, deep: 0.5 }[researchDepth];
   const costLimitUsd = paidResearchNumber(candidate.costLimitUsd, "cost limit", 0, maximumCost);
   if (candidate.device !== "desktop" && candidate.device !== "mobile") {
@@ -1312,6 +1317,16 @@ export function createChatHandler(options: ChatGatewayOptions): RequestListener 
         return;
       }
 
+      // Deliberately below /health, so the platform's health check keeps
+      // working while nobody is signed in, and above everything else, so no
+      // route can be added later that forgets to check.
+      if (
+        options.accessGate !== undefined &&
+        (await options.accessGate.handle(request, response, url))
+      ) {
+        return;
+      }
+
       if (url.pathname === "/api/agents") {
         if (request.method !== "GET") {
           sendJson(
@@ -1327,10 +1342,21 @@ export function createChatHandler(options: ChatGatewayOptions): RequestListener 
           );
           return;
         }
-        sendJson(response, 200, {
-          schemaVersion: 1,
-          agents: publicAgentDefinitions(agents),
-        });
+        const publicAgents =
+          options.skillsDirectory !== undefined &&
+          options.profileDirectory !== undefined
+            ? await buildAgentCardDefinitions(
+                agents,
+                options.skillsDirectory,
+                options.profileDirectory,
+                (message) => options.logError?.(message),
+              )
+            : publicAgentDefinitions(agents).map((agent) => ({
+                ...agent,
+                skills: [],
+                syncRequired: true,
+              }));
+        sendJson(response, 200, { schemaVersion: 2, agents: publicAgents });
         return;
       }
 
@@ -1408,6 +1434,82 @@ export function createChatHandler(options: ChatGatewayOptions): RequestListener 
         return;
       }
 
+      if (url.pathname === "/api/agent-settings") {
+        if (options.agentSettingsStore === undefined) {
+          sendJson(response, 503, {
+            error: {
+              code: "AGENT_UNAVAILABLE",
+              message: "Agent settings are not available.",
+            },
+          });
+          return;
+        }
+        try {
+          if (request.method === "GET") {
+            const saved = await options.agentSettingsStore.readAll();
+            sendJson(response, 200, { schemaVersion: 1, ...saved });
+            return;
+          }
+          if (request.method === "PUT") {
+            const body = await readRequestBody(request, MAX_REQUEST_BYTES);
+            if (
+              typeof body !== "object" ||
+              body === null ||
+              Array.isArray(body)
+            ) {
+              throw new AgentSettingsValidationError(
+                "Agent settings must be an object.",
+              );
+            }
+            const candidate = body as Record<string, unknown>;
+            if (typeof candidate.agentId !== "string") {
+              throw new AgentSettingsValidationError(
+                "Choose an agent before saving settings.",
+              );
+            }
+            const saved = await options.agentSettingsStore.write(
+              candidate.agentId,
+              candidate.values,
+            );
+            sendJson(response, 200, {
+              schemaVersion: 1,
+              ...saved,
+              syncRequired: true,
+            });
+            return;
+          }
+          sendJson(
+            response,
+            405,
+            {
+              error: {
+                code: "INVALID_REQUEST",
+                message: "That method is not supported.",
+              },
+            },
+            { Allow: "GET, PUT" },
+          );
+        } catch (error) {
+          if (error instanceof AgentSettingsValidationError) {
+            sendJson(response, 400, {
+              error: {
+                code: "INVALID_REQUEST",
+                message: error.message,
+              },
+            });
+          } else {
+            options.logError?.("Could not manage agent settings", error);
+            sendJson(response, 500, {
+              error: {
+                code: "AGENT_UNAVAILABLE",
+                message: "Agent settings could not be saved.",
+              },
+            });
+          }
+        }
+        return;
+      }
+
       if (url.pathname === "/api/business-memory/jobs") {
         try {
           if (request.method === "GET") {
@@ -1434,9 +1536,9 @@ export function createChatHandler(options: ChatGatewayOptions): RequestListener 
                 "That research job is not registered to this conversation.",
               );
             }
-            const memory = job.status === "queued"
-              ? undefined
-              : chatStore.getBusinessMemory(job.domain);
+            const memory = job.status === "completed" || job.status === "partial"
+              ? chatStore.getBusinessMemory(job.domain)
+              : undefined;
             sendJson(response, 200, {
               schemaVersion: 1,
               job,
@@ -1513,13 +1615,13 @@ export function createChatHandler(options: ChatGatewayOptions): RequestListener 
           if (error instanceof PublicError) {
             sendError(response, error);
           } else {
-            options.logError?.("Could not safely read the public domain page", error);
+            options.logError?.("Could not safely read the authorised public domain", error);
             sendError(
               response,
               new PublicError(
                 502,
                 "BUSINESS_MEMORY_ERROR",
-                "The public page could not be read safely.",
+                "The authorised public page could not be read safely.",
               ),
             );
           }
@@ -2554,6 +2656,58 @@ export function createChatHandler(options: ChatGatewayOptions): RequestListener 
               ),
             );
           }
+        }
+        return;
+      }
+
+      if (url.pathname === "/api/funding-progress") {
+        if (request.method !== "GET") {
+          sendJson(
+            response,
+            405,
+            {
+              error: {
+                code: "INVALID_REQUEST",
+                message: "Read funding progress with GET.",
+              },
+            },
+            { Allow: "GET" },
+          );
+          return;
+        }
+        // The page polls this while a funding search runs, to draw its
+        // progress bar. n8n answers it from the search's own progress notes —
+        // no agent, no model call — so the poll costs nothing. A chat page has
+        // to keep working when n8n is down or mid-restart, which is why every
+        // failure here is a quiet "not available" rather than an error the
+        // user has to read.
+        try {
+          const progressUrl = new URL(
+            "/webhook/funding-progress",
+            options.upstreamUrl,
+          );
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), 5_000);
+          let upstream: Response;
+          try {
+            upstream = await fetchImplementation(progressUrl, {
+              signal: controller.signal,
+            });
+          } finally {
+            clearTimeout(timer);
+          }
+          if (!upstream.ok) {
+            sendJson(response, 200, { schemaVersion: 1, available: false });
+            return;
+          }
+          const body = (await upstream.json()) as Record<string, unknown>;
+          sendJson(response, 200, {
+            ...body,
+            schemaVersion: 1,
+            available: true,
+          });
+        } catch {
+          sendJson(response, 200, { schemaVersion: 1, available: false });
         }
         return;
       }
